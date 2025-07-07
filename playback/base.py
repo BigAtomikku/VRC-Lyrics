@@ -1,5 +1,5 @@
 class BasePlayback:
-    def __init__(self):
+    def __init__(self, lyrics):
         self.name = None
         self.artists = []
         self.progress_ms = 0
@@ -11,6 +11,7 @@ class BasePlayback:
         self._last_lyric_key = None
         self._last_name = None
         self._last_artists = None
+        self.lyrics_provider = lyrics
 
     def fetch_playback(self):
         raise NotImplementedError("fetch_playback must be implemented in subclasses")

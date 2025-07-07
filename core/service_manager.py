@@ -1,6 +1,5 @@
 import queue
 import config
-import asyncio
 import threading
 from core import lrc, ChatboxManager, ParamManager
 
@@ -24,8 +23,7 @@ class ServiceManager:
             port = config.get('port')
 
             self.lrc_thread = threading.Thread(target=lambda: self._run_lrc(handlers), daemon=True)
-            osc = self._create_osc_manager(ip, port)
-            self.osc_thread = threading.Thread(target=osc.run, daemon=True)
+            self.osc_thread = threading.Thread(target=lambda: self._create_osc_manager(ip, port).run(), daemon=True)
 
             self.lrc_thread.start()
             self.osc_thread.start()
@@ -37,14 +35,14 @@ class ServiceManager:
 
             print("[ServiceManager] Stopping Services...")
             self.running.clear()
+            self.queue.put(None)
 
             if self.lrc_thread and self.lrc_thread.is_alive():
                 self.lrc_thread.join()
             if self.osc_thread and self.osc_thread.is_alive():
                 self.osc_thread.join()
 
-            self.lrc_thread = None
-            self.osc_thread = None
+            self.lrc_thread, self.osc_thread = None, None
 
             while not self.queue.empty():
                 try:
@@ -54,13 +52,13 @@ class ServiceManager:
 
     def _run_lrc(self, handlers):
         try:
-            asyncio.run(lrc(self.queue, self.running, handlers))
+            return lrc(self.queue, self.running, handlers)
         except Exception as e:
             print(f"[ServiceManager] Fatal error in LRC: {e}")
             if "Invalid client_id" in str(e):
-                handlers.error("Invalid Spotify Client ID. Please check your configuration.")
+                handlers.error("Invalid Spotify Client ID. Please check your config.")
             else:
-                handlers.error("Program error occurred. Please check your config or restart.")
+                handlers.error(f"Program error occurred: {e}")
             self.running.clear()
 
     def _create_osc_manager(self, ip, port):

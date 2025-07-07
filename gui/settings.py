@@ -169,7 +169,7 @@ class Settings:
 
         def update_lyric_fields():
             lp = self.lyric_provider_dropdown.value
-            print("Lyric provider selected:", lp)
+
             match lp:
                 case "Spotify":
                     self.lyric_fields_container.content = ft.Column(controls=[ft.Container(content=self.sp_dc_field)])

@@ -1,87 +1,81 @@
-# TOTP class taken from votify by glomatico (https://github.com/glomatico/votify)
-# Licensed under MIT License
-
-import time
-import math
-import hmac
-import hashlib
-import spotipy
+import asyncio
 import requests
-
+from pyppeteer import launch
 
 class SpotifyAuthError(Exception):
     """Raised when we fail to fetch or parse a Spotify access token."""
     pass
 
+class Spotify:
+    def __init__(self, sp_dc):
+        self.sp_dc = sp_dc
+        self.bearer_token = None
+        asyncio.run(self._get_bearer_token())
 
-class TOTP:
-    def __init__(self) -> None:
-        self.secret = b"5507145853487499592248630329347"
-        self.version = 5
-        self.period = 30
-        self.digits = 6
-
-    def generate(self, timestamp: int) -> str:
-        counter = math.floor(timestamp / 1000 / self.period)
-        counter_bytes = counter.to_bytes(8, byteorder="big")
-
-        h = hmac.new(self.secret, counter_bytes, hashlib.sha1)
-        hmac_result = h.digest()
-
-        offset = hmac_result[-1] & 0x0F
-        binary = (
-                (hmac_result[offset] & 0x7F) << 24
-                | (hmac_result[offset + 1] & 0xFF) << 16
-                | (hmac_result[offset + 2] & 0xFF) << 8
-                | (hmac_result[offset + 3] & 0xFF)
+    async def _get_bearer_token(self):
+        browser = await launch(
+            headless=True,
+            executablePath=r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            args=['--no-first-run',  '--no-default-browser-check'],
+            handleSIGINT=False, handleSIGTERM=False, handleSIGHUP=False
         )
 
-        return str(binary % (10 ** self.digits)).zfill(self.digits)
+        page = await browser.newPage()
 
-
-class Spotify:
-    def __init__(self, sp_dc_cookie):
-        if not sp_dc_cookie:
-            raise ValueError("Missing sp_dc cookie")
-
-        self.session = requests.Session()
-        self.session.cookies.set('sp_dc', sp_dc_cookie)
-        self.session.headers.update({
-            "User-Agent": "Mozilla/5.0",
-            "App-Platform": "WebPlayer"
+        await page.setCookie({
+            'name': 'sp_dc',
+            'value': self.sp_dc,
+            'domain': '.spotify.com',
+            'path': '/',
+            'httpOnly': True,
+            'secure': True
         })
-        self.totp = TOTP()
-        self.token = None
-        self._fetch_access_token()
-        self.sp = spotipy.Spotify(self.token)
 
-    def _fetch_access_token(self):
-        now_ms = int(time.time() * 1000)
-        totp = self.totp.generate(timestamp=now_ms)
+        token_future = asyncio.get_event_loop().create_future()
 
-        params = {
-            "reason": "transport",
-            "productType": "web-player",
-            "totp": totp,
-            "totpServer": totp,
-            "totpVer": str(self.totp.version),
-        }
+        def _on_request(request):
+            auth = request.headers.get('authorization', '')
+            if auth.startswith('Bearer ') and not token_future.done():
+                token_future.set_result(auth)
 
-        response = self.session.get("https://open.spotify.com/api/token", params=params)
-        token = response.json().get("accessToken")
-        if not token:
+        page.on('request', _on_request)
+
+        await page.goto('https://open.spotify.com/', waitUntil='networkidle2')
+
+        try:
+            bearer = await asyncio.wait_for(token_future, timeout=10)
+        except asyncio.TimeoutError:
+            await browser.close()
+            raise SpotifyAuthError("Timed out waiting for Spotify bearer token")
+
+        await browser.close()
+
+        self.bearer_token = bearer
+        response = requests.get("https://api.spotify.com/v1/me", headers={"Authorization": self.bearer_token})
+
+        if response.status_code == 401:
             raise SpotifyAuthError(f"Invalid sp_dc cookie")
 
-        self.token = response.json()['accessToken']
-        self.session.headers['Authorization'] = f"Bearer {self.token}"
-
     def get_lyrics(self, track_id):
-        url = f"https://spclient.wg.spotify.com/color-lyrics/v2/track/{track_id}"
+        headers = {
+            "Authorization": self.bearer_token,
+            "User-Agent": "Mozilla/5.0",
+            "App-Platform": "WebPlayer"
+        }
         params = {"format": "json", "market": "from_token"}
+        url = f"https://spclient.wg.spotify.com/color-lyrics/v2/track/{track_id}"
 
-        response = self.session.get(url, params=params)
+        response = requests.get(url, headers=headers, params=params)
 
-        return response.json() if response.status_code == 200 else None
+        if response.status_code == 200:
+            return response.json()
+        elif response.status_code == 401:
+            self._get_bearer_token()
+            return self.get_lyrics(track_id)
+        elif response.status_code == 404:
+            return None
+        else:
+            raise SpotifyAuthError(f"Unexpected status {response.status_code}: {response.text}")
 
 
 class SpotifyLyrics:
@@ -90,6 +84,7 @@ class SpotifyLyrics:
 
     def get_lyrics(self, playback):
         lyrics_data = self.Spotify.get_lyrics(playback.id)
+
         if not lyrics_data:
             return False
 

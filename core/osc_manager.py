@@ -1,4 +1,4 @@
-import time
+import queue
 import config
 from pythonosc.udp_client import SimpleUDPClient
 from .messages import LyricUpdate, SongUpdate, IsPlayingUpdate
@@ -45,7 +45,6 @@ class BaseOSCManager:
     def process_queue_messages(self):
         while not self.song_data_queue.empty():
             message = self.song_data_queue.get_nowait()
-            print(message)
 
             if isinstance(message, SongUpdate):
                 self.handle_song_update(message.playback)
@@ -55,14 +54,18 @@ class BaseOSCManager:
             elif isinstance(message, LyricUpdate):
                 self.handle_lyric_update(message.lyric)
 
-    def update(self):
-        raise NotImplementedError("Subclasses should implement this method")
-
     def run(self):
         while self.running.is_set():
-            self.process_queue_messages()
-            self.update()
-            time.sleep(0.1)
+            try:
+                msg = self.song_data_queue.get(timeout=10)
+            except queue.Empty:
+                self.send_osc_message()
+            else:
+                if msg is None:
+                    break
+
+                self.song_data_queue.put(msg)
+                self.process_queue_messages()
 
         self.client.send_message(self.osc_path, ["", True, False])
 
@@ -75,8 +78,6 @@ class ChatboxManager(BaseOSCManager):
 
     def __init__(self, ip, port, song_data_queue, running):
         super().__init__(ip, port, song_data_queue, running, self.OSC_CHATBOX_PATH)
-        self.last_update_time = time.time()
-        self.refresh_timeout = 10
         self.is_playing = None
 
     def send_osc_message(self, lyric=None):
@@ -98,20 +99,11 @@ class ChatboxManager(BaseOSCManager):
                 lyrics = self.last_lyric
 
         try:
-            message = self.song_display.format(status=status, name=name, artist=artist, mic=mic, lyrics=lyrics)
-        except KeyError as e:
-            print(f"[ChatboxManager] Invalid chatbox_format key: {e}")
-            message = f"{status} {name} - {artist}\n{mic} {lyrics}"
+            message = self.song_display.format(status=status, name=name, artist=artist, mic=mic, lyrics=lyrics).strip()
+        except KeyError:
+            message = f"{status} {name} - {artist}\n{mic} {lyrics}".strip()
 
-        self.client.send_message(self.osc_path, [message.strip(), True, False])
-        self.last_update_time = time.time()
-
-    def update(self):
-        if not self.track:
-            return
-
-        if time.time() - self.last_update_time >= self.refresh_timeout:
-            self.send_osc_message()
+        self.client.send_message(self.osc_path, [message, True, False])
 
 
 class ParamManager(BaseOSCManager):
@@ -119,6 +111,3 @@ class ParamManager(BaseOSCManager):
 
     def __init__(self, ip, port, song_data_queue, running):
         super().__init__(ip, port, song_data_queue, running, self.OSC_LYRICS_PATH)
-
-    def update(self):
-        pass

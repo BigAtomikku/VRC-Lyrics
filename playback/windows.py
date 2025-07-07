@@ -1,15 +1,18 @@
 import time
-from playback import BasePlayback
+import asyncio
+from . import BasePlayback
 from winsdk.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as MediaManager
 
 
 class WindowsPlayback(BasePlayback):
     def __init__(self, lyrics):
-        super().__init__()
-        self.lyrics_provider = lyrics
+        super().__init__(lyrics)
         self._last_fetch_time = None
 
-    async def fetch_playback(self):
+    def fetch_playback(self):
+        return asyncio.run(self._fetch_playback_async())
+
+    async def _fetch_playback_async(self):
         sessions = await MediaManager.request_async()
         current_session = sessions.get_current_session()
         if not current_session:

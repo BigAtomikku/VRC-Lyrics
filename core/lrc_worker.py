@@ -1,19 +1,20 @@
+import time
 import config
-import asyncio
 from lyrics import LRCLibLyrics, SpotifyLyrics, SpotifyAuthError
 from playback import SpotifyPlayback, WindowsPlayback
 from .messages import LyricUpdate, SongUpdate, IsPlayingUpdate
 
 
-async def poll_playback(playback, song_data_queue, running, handlers):
+def poll_playback(playback, song_data_queue, running, handlers):
     previous_position = 0
     previous_key = None
 
     while running.is_set():
         previous_is_playing = playback.is_playing
-        fetch_success = await playback.fetch_playback()
+        fetch_success = playback.fetch_playback()
+
         if not fetch_success:
-            await asyncio.sleep(1)
+            time.sleep(1)
             continue
 
         handlers.progress(progress=playback.progress_ms, duration=playback.duration_ms)
@@ -31,7 +32,7 @@ async def poll_playback(playback, song_data_queue, running, handlers):
                 previous_key = update_lyrics(playback, previous_position, previous_key, song_data_queue, handlers)
                 previous_position = playback.progress_ms
 
-        await asyncio.sleep(1)
+        time.sleep(1)
 
 
 def handle_track_change(playback, song_data_queue, handlers):
@@ -67,7 +68,7 @@ def update_lyrics(playback, previous_position, previous_key, song_data_queue, ha
     return previous_key
 
 
-async def lrc(song_data_queue, running, handlers):
+def lrc(song_data_queue, running, handlers):
     playback, lyrics = None, None
     playback_provider = config.get('playback_provider')
     lyric_provider = config.get('lyric_provider')
@@ -87,8 +88,9 @@ async def lrc(song_data_queue, running, handlers):
         case "Spotify":
             client_id = config.get('client_id')
             playback = SpotifyPlayback(client_id=client_id, lyrics=lyrics)
+
         case "Windows":
             playback = WindowsPlayback(lyrics=lyrics)
 
     if playback:
-        await poll_playback(playback, song_data_queue, running, handlers)
+        poll_playback(playback, song_data_queue, running, handlers)

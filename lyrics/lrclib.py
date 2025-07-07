@@ -1,5 +1,5 @@
 from lrclib import LrcLibAPI
-from .utils import lrc_to_dictionary
+from .parsing import lrc_to_dictionary
 
 
 class LRCLibLyrics:
@@ -17,3 +17,5 @@ class LRCLibLyrics:
                 filtered = [r for r in results if r.synced_lyrics and abs(r.duration - duration) <= 3]
                 if filtered:
                     return lrc_to_dictionary(filtered[0].synced_lyrics)
+
+        return None
